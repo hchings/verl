@@ -18,12 +18,47 @@ import logging
 from contextlib import contextmanager
 from typing import Any, Optional
 
+import psutil
+import pynvml
 import torch
 import torch.distributed as dist
 from codetiming import Timer
 
 from verl.utils.device import get_device_id, get_torch_device
 from verl.utils.logger import DecoratorLoggerBase
+
+_pynvmlInited = False
+
+
+def get_gpu_memory_by_processes(device_id: int = None):
+    if device_id is None:
+        device_id = get_device_id()
+
+    pynvml.nvmlInit()
+    handle = pynvml.nvmlDeviceGetHandleByIndex(device_id)
+
+    processes = pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
+
+    mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+
+    pynvml.nvmlShutdown()
+
+    def get_process_name(pid):
+        try:
+            return psutil.Process(pid).cmdline()[0]
+        except (psutil.NoSuchProcess, psutil.AccessDenied, IndexError):
+            return "Unknown"
+
+    return {
+        "device_id": device_id,
+        "total_gb": mem_info.total / (1024**3),
+        "used_gb": mem_info.used / (1024**3),
+        "free_gb": mem_info.free / (1024**3),
+        "processes": [
+            {"pid": p.pid, "process_name": get_process_name(p.pid), "memory_gb": p.usedGpuMemory / (1024**3)}
+            for p in processes
+        ],
+    }
 
 
 def _get_current_mem_info(unit: str = "GB", precision: int = 2) -> tuple[str]:
@@ -60,7 +95,7 @@ def _get_current_mem_info(unit: str = "GB", precision: int = 2) -> tuple[str]:
     return mem_allocated, mem_reserved, mem_used, mem_total
 
 
-def log_gpu_memory_usage(head: str, logger: logging.Logger = None, level=logging.DEBUG, rank: int = 0):
+def log_gpu_memory_usage(head: str, logger: logging.Logger = None, level=logging.WARNING, rank: int = 0):
     """Log GPU memory usage information.
 
     Args:
@@ -74,6 +109,7 @@ def log_gpu_memory_usage(head: str, logger: logging.Logger = None, level=logging
         message = (
             f"{head}, memory allocated (GB): {mem_allocated}, memory reserved (GB): {mem_reserved}, "
             f"device memory used/total (GB): {mem_used}/{mem_total}"
+            f"memory breakdown: {get_gpu_memory_by_processes(get_device_id())}"
         )
 
         if logger is None:

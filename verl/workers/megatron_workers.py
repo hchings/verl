@@ -81,7 +81,7 @@ from verl.workers.critic.megatron_critic import MegatronPPOCritic
 from verl.workers.rollout import get_rollout_class
 
 logger = logging.getLogger(__file__)
-logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
+logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARNING"))
 
 
 def set_random_seed(seed, only_rollout=False):
@@ -675,6 +675,7 @@ class ActorRolloutRefWorker(MegatronWorker, DistProfilerExtension):
 
     async def rollout_mode(self):
         """Context switch hybridengine to rollout mode."""
+        log_gpu_memory_usage("Beginning rollout_mode", logger=None)
         aggressive_empty_cache(force_sync=True)
         set_expandable_segments(False)
 
@@ -682,6 +683,7 @@ class ActorRolloutRefWorker(MegatronWorker, DistProfilerExtension):
             load_megatron_model_to_gpu(self.actor.actor_module, load_grad=False)
             log_gpu_memory_usage("After load actor params during rollout_mode", logger=logger)
 
+        log_gpu_memory_usage("After empty_cache during rollout_mode", logger=None)
         # Build peft_config for vLLM LoRA support
         peft_config = None
         do_lora_base_sync = False
@@ -715,6 +717,7 @@ class ActorRolloutRefWorker(MegatronWorker, DistProfilerExtension):
 
         if self.config.rollout.free_cache_engine:
             await self.rollout.resume(tags=["weights"])
+            log_gpu_memory_usage("After resume weights", logger=None)
         if do_lora_base_sync:
             # Base layer sync
             per_tensor_param_lora_base = self.bridge.export_hf_weights(
@@ -730,11 +733,15 @@ class ActorRolloutRefWorker(MegatronWorker, DistProfilerExtension):
             self.base_sync_done = True
 
         await self.rollout.update_weights(per_tensor_param, peft_config=peft_config, base_sync_done=True)
+
+        log_gpu_memory_usage("After update_weights", logger=None)
         if self._is_offload_param:
             offload_megatron_model_to_cpu(self.actor.actor_module)
         aggressive_empty_cache(force_sync=True)
         if self.config.rollout.free_cache_engine:
             await self.rollout.resume(tags=["kv_cache"])
+
+        log_gpu_memory_usage("After resume kv_cache", logger=None)
 
         set_expandable_segments(True)
 
@@ -742,6 +749,7 @@ class ActorRolloutRefWorker(MegatronWorker, DistProfilerExtension):
     @GPUMemoryLogger(role="update_actor", logger=logger)
     @DistProfiler.annotate(color="red", role="actor_update")
     def update_actor(self, data: DataProto):
+        log_gpu_memory_usage("Beginning update_actor", logger=None)
         assert self._is_actor
         if self._is_offload_param:
             load_megatron_model_to_gpu(self.actor_module)
@@ -782,6 +790,7 @@ class ActorRolloutRefWorker(MegatronWorker, DistProfilerExtension):
             log_gpu_memory_usage("After offload actor optimizer during update_actor", logger=logger)
 
         aggressive_empty_cache(force_sync=True)
+        log_gpu_memory_usage("After empty_cache during update_actor", logger=None)
         return output
 
     @register(dispatch_mode=make_nd_compute_dataproto_dispatch_fn(mesh_name="rollout"))
