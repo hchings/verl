@@ -411,7 +411,7 @@ class ServerAdapter(BaseRollout):
         await asyncio.to_thread(dist.barrier, group=self.hybrid_device_mesh["exclude_dp"].get_group())
 
     async def update_weights(
-        self, weights: Generator[tuple[str, torch.Tensor], None, None], global_steps: int = None, **kwargs
+        self, weights: AsyncGenerator[tuple[str, torch.Tensor], None], global_steps: int = None, **kwargs
     ):
         assert self.hybrid_device_mesh is not None, "hybrid_device_mesh is not set"
 
@@ -468,7 +468,7 @@ class ServerAdapter(BaseRollout):
             await asyncio.to_thread(dist.broadcast, spl_tensor, src=leader_global_rank, group=exclude_dp_group)
             supports_partial_loading = bool(spl_tensor.item())
 
-        for name, param in weights:
+        async for name, param in weights:
             if supports_partial_loading:
                 size_in_bytes = param.element_size() * param.numel()
                 if size_in_bytes > cur_available_bytes:
