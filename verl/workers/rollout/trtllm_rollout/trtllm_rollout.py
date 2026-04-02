@@ -29,6 +29,7 @@ import pynvml
 import ray
 import torch
 import torch.distributed as dist
+from tensorrt_llm.llmapi.llm_args import ExecutorMemoryType
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 from torch.multiprocessing.reductions import reduce_tensor
 
@@ -260,18 +261,10 @@ class AsyncTRTLLMHttpAdapter:
 
 
 class ServerAdapter(BaseRollout):
-    # TODO: change to non hard-coded
+    # All releasable/resumable weight tags: every ExecutorMemoryType except kv_cache
+    # (handled separately) and internal tags prefixed with "_".
     _WEIGHTS_TAGS = [
-        "sampler",
-        "drafter",
-        "guided_decoder",
-        "spec_resource_manager",
-        "model_extra",
-        "executor_extra",
-        "model",
-        "model_weights",
-        "draft_model",
-        "draft_model_weights",
+        t.value for t in ExecutorMemoryType if t is not ExecutorMemoryType.KV_CACHE and not t.value.startswith("_")
     ]
 
     @staticmethod
