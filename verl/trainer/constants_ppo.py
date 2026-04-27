@@ -21,10 +21,9 @@ PPO_RAY_RUNTIME_ENV = {
     "env_vars": {
         "TOKENIZERS_PARALLELISM": "true",
         # "NCCL_DEBUG": "INFO",
-        # TODO: Need to set this on Lyris clusters for now. Need to root cause env issues.
-        "NCCL_P2P_DISABLE": "1",
-        # "NCCL_NVLS_ENABLE": "0",
-        # "NCCL_MNNVL_ENABLE": "0",
+        # TODO: Need to set this on Lyris clusters for now. Remove this from the MR.
+        "NCCL_NVLS_ENABLE": "0",
+        "NCCL_MNNVL_ENABLE": "0",
         "VLLM_LOGGING_LEVEL": "WARN",
         "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "true",
         "CUDA_DEVICE_MAX_CONNECTIONS": "1",
