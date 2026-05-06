@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -xeuo pipefail
-# GB200 config: 4 trainer nodes + 4 rollout nodes, 4 GPUs each (16+16 GPUs total)
+# GB200 config: 2 trainer nodes + 2 rollout nodes, 4 GPUs each (8+8 GPUs total)
 
 project_name='GRPO-Qwen3-30b-Base-MATH-trtllm'
-exp_name='GRPO-Qwen3-30b-Base-MATH-megatron-fully-async-trtllm-gb200-16-16'
+exp_name='GRPO-Qwen3-30b-Base-MATH-megatron-fully-async-trtllm-gb200-8-8'
 
-RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
+RAY_DATA_HOME=${RAY_DATA_HOME:-"${PWD}"}
 MODEL_PATH=${MODEL_PATH:-"${RAY_DATA_HOME}/models/Qwen3-30B-A3B-Base"}
 CKPTS_DIR=${CKPTS_DIR:-"${RAY_DATA_HOME}/ckpts/${project_name}/${exp_name}"}
 TRAIN_FILE=${TRAIN_FILE:-"${RAY_DATA_HOME}/data/dapo-math-17k.parquet"}
@@ -31,9 +31,6 @@ clip_ratio_high=0.28
 # Response length parameters
 max_prompt_length=$((1024 * 2))
 max_response_length=$((1024 * 8))
-enable_overlong_buffer=True
-overlong_buffer_len=$((1024 * 4))
-overlong_penalty_factor=1.0
 
 loss_agg_mode="token-mean"
 
@@ -49,7 +46,7 @@ actor_ppo_max_token_len=$(((max_prompt_length + max_response_length)))
 infer_ppo_max_token_len=$(((max_prompt_length + max_response_length)))
 offload=False
 train_ppo_micro_batch_size_per_gpu=2
-infer_ppo_micro_batch_size_per_gpu=4
+infer_ppo_micro_batch_size_per_gpu=2
 
 optimizer_offload_fraction=${OFFLOAD_FRACTION:-0.}
 
@@ -61,9 +58,7 @@ COMMON_EP=${COMMON_EP:-4}
 COMMON_ETP=${COMMON_ETP:-1}
 
 TRAIN_TP=${TRAIN_TP:-$COMMON_TP}
-INFER_TP=${INFER_TP:-2}
-GEN_MOE_EP=${GEN_MOE_EP:-2}
-GEN_MOE_TP=${GEN_MOE_TP:-1}
+INFER_TP=${INFER_TP:-4}
 
 ACTOR_PP=${ACTOR_PP:-$COMMON_PP}
 ACTOR_VPP=${ACTOR_VPP:-$COMMON_VPP}
@@ -97,14 +92,14 @@ USE_MBRIDGE=True
 USE_DIST_CKPT=False
 
 # Fully async specific parameters
-NNODES_ROLLOUT=${NNODES_ROLLOUT:-4}
-NNODES_TRAIN=${NNODES_TRAIN:-4}
+NNODES_ROLLOUT=${NNODES_ROLLOUT:-2}
+NNODES_TRAIN=${NNODES_TRAIN:-2}
 NGPUS_PER_NODE=${NGPUS_PER_NODE:-4}
 
 train_prompt_bsz=0
 gen_prompt_bsz=1
 n_resp_per_prompt=16
-train_prompt_mini_bsz=128
+train_prompt_mini_bsz=32
 total_rollout_steps=$(((512*400)))
 test_freq=20
 staleness_threshold=0.5
@@ -185,12 +180,10 @@ python -m verl.experimental.fully_async_policy.fully_async_main \
     actor_rollout_ref.actor.loss_agg_mode=${loss_agg_mode} \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=${infer_ppo_micro_batch_size_per_gpu} \
     actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=${infer_ppo_max_token_len} \
-    actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=True \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=${INFER_TP} \
-    actor_rollout_ref.rollout.expert_parallel_size=${GEN_MOE_EP} \
-    actor_rollout_ref.rollout.dtype=bfloat16 \
     actor_rollout_ref.rollout.enable_chunked_prefill=True \
+    actor_rollout_ref.rollout.max_model_len=$((max_prompt_length + max_response_length)) \
     actor_rollout_ref.rollout.max_num_seqs=2048 \
     actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
     actor_rollout_ref.rollout.temperature=${temperature} \
@@ -200,16 +193,14 @@ python -m verl.experimental.fully_async_policy.fully_async_main \
     actor_rollout_ref.rollout.val_kwargs.top_p=${val_top_p} \
     actor_rollout_ref.rollout.val_kwargs.top_k=${top_k} \
     actor_rollout_ref.rollout.val_kwargs.do_sample=True \
-    actor_rollout_ref.rollout.val_kwargs.n=1 \
+    actor_rollout_ref.rollout.val_kwargs.n=4 \
     actor_rollout_ref.rollout.name=${rollout_name} \
     actor_rollout_ref.rollout.mode=${rollout_mode} \
     actor_rollout_ref.rollout.calculate_log_probs=True \
     actor_rollout_ref.rollout.checkpoint_engine.update_weights_bucket_megabytes=4096 \
     actor_rollout_ref.hybrid_engine=False \
-    +actor_rollout_ref.rollout.moe_tensor_parallel_size=${GEN_MOE_TP} \
     +actor_rollout_ref.rollout.engine_kwargs.trtllm.batch_wait_timeout_iters=32 \
     +actor_rollout_ref.rollout.engine_kwargs.trtllm.batch_wait_max_tokens_ratio=0.5 \
-    +actor_rollout_ref.rollout.engine_kwargs.trtllm.kv_cache_config.dtype=fp8 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=${infer_ppo_micro_batch_size_per_gpu} \
     actor_rollout_ref.ref.log_prob_max_token_len_per_gpu=${infer_ppo_max_token_len} \
     actor_rollout_ref.ref.megatron.use_dist_checkpointing=${USE_DIST_CKPT} \
@@ -223,12 +214,7 @@ python -m verl.experimental.fully_async_policy.fully_async_main \
     ++actor_rollout_ref.ref.megatron.override_transformer_config.attention_backend=auto \
     ++actor_rollout_ref.ref.megatron.override_transformer_config.moe_token_dispatcher_type="alltoall" \
     ++actor_rollout_ref.ref.megatron.override_transformer_config.moe_enable_deepep=False \
-    reward.reward_manager.name=dapo \
-    +reward.reward_kwargs.overlong_buffer_cfg.enable=${enable_overlong_buffer} \
-    +reward.reward_kwargs.overlong_buffer_cfg.len=${overlong_buffer_len} \
-    +reward.reward_kwargs.overlong_buffer_cfg.penalty_factor=${overlong_penalty_factor} \
-    +reward.reward_kwargs.overlong_buffer_cfg.log=False \
-    +reward.reward_kwargs.max_resp_len=${max_response_length} \
+    reward.reward_manager.name=naive \
     trainer.logger=['console','wandb'] \
     trainer.project_name="${project_name}" \
     trainer.experiment_name="${exp_name}" \

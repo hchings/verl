@@ -18,7 +18,7 @@ Usage:
     pytest tests/workers/rollout/rollout_trtllm/test_trtllm_abort.py -v -s
 
 Environment variables:
-    TRTLLM_TEST_MODEL_PATH: full path to model weights
+    TRTLLM_TEST_MODEL_PATH_ROOT: parent directory containing model weights (default: ~/models)
     TRTLLM_TEST_TP_SIZE: tensor parallel size (default: 2)
     TRTLLM_TEST_GPUS_PER_NODE: number of GPUs (default: 2)
 """
@@ -31,11 +31,8 @@ from uuid import uuid4
 
 def test_trtllm_abort():
     # ==================== Configuration ====================
-    MODEL_PATH = os.getenv(
-        "TRTLLM_TEST_MODEL_PATH",
-        "/lustre/fsw/coreai_comparch_trtllm/erinh/llm-models/Qwen/Qwen2.5-1.5B-Instruct",
-    )
-    # MODEL_PATH = os.path.expanduser("~/models/Qwen/Qwen2.5-1.5B-Instruct")
+    model_root = os.path.expanduser(os.getenv("TRTLLM_TEST_MODEL_PATH_ROOT", "~/models"))
+    MODEL_PATH = os.path.join(model_root, "Qwen/Qwen2.5-1.5B-Instruct")
     GPUS_PER_NODE = int(os.getenv("TRTLLM_TEST_GPUS_PER_NODE", "2"))
     TP_SIZE = int(os.getenv("TRTLLM_TEST_TP_SIZE", "2"))
     ABORT_DELAY = 0.5  # seconds to wait before aborting
