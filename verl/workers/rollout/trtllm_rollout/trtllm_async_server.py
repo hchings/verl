@@ -477,14 +477,6 @@ class TRTLLMReplica(RolloutReplica):
     def rollout_worker_use_gpu(self) -> bool:
         return False
 
-    def _standalone_use_gpu(self) -> bool:
-        # CheckpointEngineWorkers need CUDA access to create IPC handles for TRT-LLM engine workers.
-        return True
-
-    def _standalone_max_colocate_count(self) -> int:
-        # one for TRT-LLM engine worker (0.5 GPU), one for CheckpointEngineWorker (0.5 GPU).
-        return 2
-
     def get_pgs_and_bundle_indices(self) -> tuple[list[PlacementGroup], list[list[int]]]:
         """Get placement groups and bundle indices for the replica."""
 
