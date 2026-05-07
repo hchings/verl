@@ -186,10 +186,6 @@ class RolloutReplica(ABC):
         self.workers = worker_group.workers
         await self.launch_servers()
 
-    def _standalone_max_colocate_count(self) -> int:
-        """Standalone colocates 2 actors per bundle: rollout worker + CheckpointEngineWorker."""
-        return 2
-
     async def init_standalone(self):
         """Init standalone rollout server, create new resource pool for this rollout."""
         # create resource pool for this rollout
@@ -206,7 +202,7 @@ class RolloutReplica(ABC):
         resource_pool_manager = ResourcePoolManager(
             resource_pool_spec=resource_pool_spec,
             mapping=None,
-            max_colocate_count=self._standalone_max_colocate_count(),
+            max_colocate_count=2,
         )
         resource_pool_manager.create_resource_pool()
         self.resource_pool = resource_pool_manager.resource_pool_dict[resource_pool_name]
