@@ -3,7 +3,7 @@
 
 set -xeuo pipefail
 
-project_name='DAPO_fully_async_erinh'
+project_name='DAPO_fully_async'
 exp_name='DAPO-Qwen3-8b-Base-MATH-megatron-fully-async-trtllm-gb200-4-4-bypassFalse'
 
 adv_estimator=grpo
