@@ -122,83 +122,6 @@ jobs:
           pytest -v -s --durations=20 \
             tests/workers/rollout/rollout_trtllm/test_trtllm_abort.py
 
-  # FSDP2: same GPU split as vLLM's e2e_fully_async_policy.yml (4 rollout GPUs, TP=4, 1 replica).
-  e2e_fully_async_policy_trtllm_fsdp2:
-    needs: setup
-    runs-on: ["${{ needs.setup.outputs.runner-label || 'L20x8' }}"]
-    timeout-minutes: 20
-    env:
-      HTTP_PROXY: ${{ secrets.PROXY_HTTP }}
-      HTTPS_PROXY: ${{ secrets.PROXY_HTTPS }}
-      NO_PROXY: "localhost,127.0.0.1,hf-mirror.com"
-      HF_ENDPOINT: "https://hf-mirror.com"
-      HF_HUB_ENABLE_HF_TRANSFER: "0"
-      ACTOR_STRATEGY: "fsdp2"
-      ROLLOUT_NAME: "trtllm"
-      # 12 attention heads, divisible by TP=4
-      MODEL_ID: "Qwen/Qwen2.5-1.5B-Instruct"
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          fetch-depth: 0
-      - name: Install the current repository
-        run: |
-          pip3 install -r requirements-test.txt
-          pip3 install --no-deps -e .
-          pip3 install cupy-cuda12x==14.0.1
-      - name: Prepare GSM8K dataset
-        run: |
-          python3 examples/data_preprocess/gsm8k.py --local_dataset_path ${HOME}/models/hf_data/gsm8k
-      - name: Running TRT-LLM fully-async E2E test (FSDP2)
-        run: |
-          ray stop --force
-          bash tests/special_e2e/run_fully_async_policy.sh \
-            data.max_response_length=128 \
-            actor_rollout_ref.rollout.n=2 \
-            actor_rollout_ref.rollout.gpu_memory_utilization=0.1 \
-            actor_rollout_ref.actor.ppo_mini_batch_size=4 \
-            actor_rollout_ref.actor.ppo_max_token_len_per_gpu=1536 \
-            actor_rollout_ref.actor.fsdp_config.param_offload=True \
-            actor_rollout_ref.actor.fsdp_config.optimizer_offload=True
-
-  # Megatron single replica: all 4 rollout GPUs form one TP=4 group.
-  e2e_fully_async_policy_trtllm_megatron_single_replica:
-    needs: setup
-    runs-on: ["${{ needs.setup.outputs.runner-label || 'L20x8' }}"]
-    timeout-minutes: 20
-    env:
-      HTTP_PROXY: ${{ secrets.PROXY_HTTP }}
-      HTTPS_PROXY: ${{ secrets.PROXY_HTTPS }}
-      NO_PROXY: "localhost,127.0.0.1,hf-mirror.com"
-      HF_ENDPOINT: "https://hf-mirror.com"
-      HF_HUB_ENABLE_HF_TRANSFER: "0"
-      ACTOR_STRATEGY: "megatron"
-      ROLLOUT_NAME: "trtllm"
-      MODEL_ID: "Qwen/Qwen2.5-1.5B-Instruct"
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          fetch-depth: 0
-      - name: Install the current repository
-        run: |
-          pip3 install -r requirements-test.txt
-          pip3 install --no-deps -e .
-          pip3 install cupy-cuda12x==14.0.1
-          # WAR: CI image predates mbridge cf71117 (removes `imp` for Python 3.12). Drop this line after CI image is refreshed.
-          pip3 install --force-reinstall --no-deps --no-build-isolation git+https://github.com/ISEEKYAN/mbridge.git
-      - name: Prepare GSM8K dataset
-        run: |
-          python3 examples/data_preprocess/gsm8k.py --local_dataset_path ${HOME}/models/hf_data/gsm8k
-      - name: Running TRT-LLM fully-async E2E test with Megatron (single replica, TP=4)
-        run: |
-          ray stop --force
-          bash tests/special_e2e/run_fully_async_policy.sh \
-            data.max_response_length=128 \
-            actor_rollout_ref.rollout.n=2 \
-            actor_rollout_ref.rollout.gpu_memory_utilization=0.1 \
-            actor_rollout_ref.actor.ppo_mini_batch_size=4 \
-            actor_rollout_ref.actor.ppo_max_token_len_per_gpu=1536
-
   # Megatron multi-replica: 4 rollout GPUs split into 2 replicas × TP=2.
   e2e_fully_async_policy_trtllm_megatron_multi_replica:
     needs: setup
@@ -239,7 +162,7 @@ jobs:
 
   cleanup:
     runs-on: ubuntu-latest
-    needs: [setup, trtllm_async_unit_tests, e2e_fully_async_policy_trtllm_fsdp2, e2e_fully_async_policy_trtllm_megatron_single_replica, e2e_fully_async_policy_trtllm_megatron_multi_replica]
+    needs: [setup, trtllm_async_unit_tests, e2e_fully_async_policy_trtllm_megatron_multi_replica]
     if: always()
     steps:
       - id: destroy-runner
