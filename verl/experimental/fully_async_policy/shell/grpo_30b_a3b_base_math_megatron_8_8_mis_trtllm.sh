@@ -108,10 +108,16 @@ require_batches=1
 partial_rollout=True
 
 # Rollout Importance Sampling
-
 rollout_is=null
 rollout_rs=seq_mean_k1
 rollout_rs_threshold="0.999_1.001"
+
+# To use fp8 rollout, add the following flags
+# actor_rollout_ref.rollout.expert_parallel_size=2 \
+# +actor_rollout_ref.rollout.moe_tensor_parallel_size=2 \
+# +actor_rollout_ref.rollout.quantization="fp8" \
+# +actor_rollout_ref.rollout.engine_kwargs.trtllm.moe_config.backend=TRTLLM \
+
 
 python -m verl.experimental.fully_async_policy.fully_async_main \
     --config-path=config \
