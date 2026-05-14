@@ -291,6 +291,10 @@ class ServerAdapter(BaseRollout):
     def __init__(
         self, config: RolloutConfig, model_config: HFModelConfig, device_mesh: DeviceMesh, replica_rank: int = -1
     ):
+        super().__init__(config, model_config, device_mesh)
+        # super().__init__ runs omega_conf_to_dataclass on model_config, so
+        # self.model_config is now a proper HFModelConfig dataclass with hf_config populated.
+        # Apply the FP8 quantization_config override after the conversion.
         if config.get("quantization", None) == "fp8":
             FP8_BLOCK_QUANT_KWARGS = {
                 "activation_scheme": "dynamic",
@@ -298,9 +302,20 @@ class ServerAdapter(BaseRollout):
                 "quant_method": "fp8",
                 "weight_block_size": [128, 128],
             }
-            fp8_block_quant_kwargs = dict(FP8_BLOCK_QUANT_KWARGS)
-            model_config.hf_config.quantization_config = fp8_block_quant_kwargs
-        super().__init__(config, model_config, device_mesh)
+            self.model_config.hf_config.quantization_config = dict(FP8_BLOCK_QUANT_KWARGS)
+
+        # NVFP4 QAT — mirror the actor's quant config onto hf_config so ServerAdapter
+        # weight-sync sees NVFP4 metadata (same role as the FP8 block above).
+        qat_cfg = config.get("qat", None)
+        if qat_cfg is not None and qat_cfg.get("enable", False):
+            qat_path = qat_cfg.get("quantization_config_path")
+            if qat_path:
+                from verl.workers.rollout.trtllm_rollout.trtllm_qat_utils import (
+                    verl_qat_json_to_trtllm_nvfp4_config,
+                )
+                self.model_config.hf_config.quantization_config = (
+                    verl_qat_json_to_trtllm_nvfp4_config(qat_path)
+                )
         self._adapter = None
         self.hybrid_device_mesh = None
         self.gpu_id = None

@@ -71,6 +71,20 @@ def model_forward_gen(vision_model: bool = False):
         batch_size, seq_len = attention_mask.shape[:2]
         mtp_enable_train = mtp_config and mtp_config.enable_train
 
+        # TODO(tentative): clamp input_ids into the trainer's vocab range to dodge
+        # `vectorized_gather_kernel: index out of bounds` from the embedding lookup
+        # when the rollout produces an id >= vocab_size (seen with QAT-w4a16 +
+        # TRT-LLM rollout on Qwen3-30B-A3B). Remove once the rollout-side root
+        # cause is fixed; the clamp silently masks the upstream bug.
+        _unwrapped_for_vocab = unwrap_model(model)
+        _vocab_size = getattr(_unwrapped_for_vocab, "vocab_size", None)
+        if _vocab_size is None:
+            _emb = getattr(_unwrapped_for_vocab, "embedding", None)
+            if _emb is not None and hasattr(_emb, "word_embeddings"):
+                _vocab_size = _emb.word_embeddings.weight.shape[0]
+        if _vocab_size is not None:
+            input_ids = input_ids.clamp(min=0, max=_vocab_size - 1)
+
         if data_format == "thd":
             input_ids_rmpad, packed_seq_params = preprocess_packed_seqs(
                 input_ids,
@@ -243,6 +257,21 @@ def gptmodel_forward_model_engine(
         model_kwargs["video_grid_thw"] = multi_modal_inputs["video_grid_thw"].to(input_ids.device)
 
     batch_size = input_ids.shape[0]
+
+    # TODO(tentative): clamp input_ids into the trainer's vocab range to dodge
+    # `vectorized_gather_kernel: index out of bounds` from the embedding lookup
+    # when the rollout produces an id >= vocab_size (seen with QAT-w4a16 +
+    # TRT-LLM rollout on Qwen3-30B-A3B). Remove once the rollout-side root
+    # cause is fixed; the clamp silently masks the upstream bug.
+    _unwrapped_for_vocab = unwrap_model(model)
+    _vocab_size = getattr(_unwrapped_for_vocab, "vocab_size", None)
+    if _vocab_size is None:
+        _emb = getattr(_unwrapped_for_vocab, "embedding", None)
+        if _emb is not None and hasattr(_emb, "word_embeddings"):
+            _vocab_size = _emb.word_embeddings.weight.shape[0]
+    if _vocab_size is not None:
+        input_ids = input_ids.clamp(min=0, max=_vocab_size - 1)
+
     if data_format == "thd":
         input_ids_rmpad, packed_seq_params, position_ids_rmpad = preprocess_thd_engine(
             input_ids,
