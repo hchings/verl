@@ -132,7 +132,18 @@ class TRTLLMHttpServer:
 
         self.profiler_controller = self._init_profiler_controller()
 
-        if self.rollout_mode != RolloutMode.HYBRID and self.config.load_format == "dummy":
+        # In non-HYBRID rollout (e.g. STANDALONE), the engine has no in-memory weights at
+        # startup, so we typically need to load from disk via load_format=auto. The first
+        # IPC-handle weight sync overwrites these later.
+        # Exception: when FP8 quantization is requested, there is no FP8 checkpoint on disk
+        # (the model was trained in bf16). FP8 weights are produced during the first weight
+        # sync via trtllm_fp8_utils. So load_format must stay "dummy" — the engine starts
+        # empty and the bf16->FP8 conversion fills it.
+        if (
+            self.rollout_mode != RolloutMode.HYBRID
+            and self.config.load_format == "dummy"
+            and self.config.quantization != "fp8"
+        ):
             logger.warning(f"rollout mode is {self.rollout_mode}, load_format is dummy, set to auto")
             self.config.load_format = "auto"
 
@@ -149,6 +160,11 @@ class TRTLLMHttpServer:
         _end_id, _stop_ids = _resolve_chat_stop_tokens(self.model_config)
 
         logger.info(f"TRT-LLM resolved end_id={_end_id}, stop_ids={_stop_ids}")
+        print(
+            f"[TRTLLMHttpServer replica_rank={self.replica_rank}] "
+            f"end_id={_end_id}, stop_ids={_stop_ids}",
+            flush=True,
+        )
 
         self._use_torch_sampler = bool(int(os.environ.get("TLLM_USE_TORCHSAMPLER", "0")))
 
@@ -215,6 +231,33 @@ class TRTLLMHttpServer:
                     raise ValueError("FP8 quantization is only supported for dummy load format")
             else:
                 raise ValueError(f"Currently only support fp8 quantization, got: {quantization}")
+
+        # NVFP4 QAT (W4A16) — actor (Megatron+modelopt) produces real-quantized NVFP4
+        # weights at sync time; rollout must build NVFP4-packed linears that match.
+        qat_cfg = self.config.qat
+        if qat_cfg is not None and qat_cfg.get("enable", False):
+            qat_mode = qat_cfg.get("mode")
+            qat_path = qat_cfg.get("quantization_config_path")
+            if qat_mode != "w4a16":
+                raise ValueError(f"TRT-LLM rollout only supports qat.mode=w4a16, got: {qat_mode}")
+            if not qat_path:
+                raise ValueError("rollout.qat.quantization_config_path is required when qat.enable=True")
+            from verl.workers.rollout.trtllm_rollout.trtllm_qat_utils import (
+                verl_qat_json_to_trtllm_nvfp4_config,
+            )
+            trtllm_quant_config = verl_qat_json_to_trtllm_nvfp4_config(qat_path)
+            engine_kwargs.setdefault("model_kwargs", {})
+            engine_kwargs["model_kwargs"]["quantization_config"] = trtllm_quant_config
+            if self.config.load_format != "dummy":
+                raise ValueError("NVFP4 QAT rollout requires load_format=dummy (weights synced from actor)")
+            _bar = "=" * 80
+            logger.info(_bar)
+            logger.info("=== NVFP4 QAT ACTIVE in TRT-LLM rollout (W4A16, weight-only FP4) ===")
+            logger.info(f"===   quant_method           : {trtllm_quant_config.get('quant_method')}")
+            logger.info(f"===   group_size             : {trtllm_quant_config.get('group_size')}")
+            logger.info(f"===   modules_to_not_convert : {trtllm_quant_config.get('modules_to_not_convert')}")
+            logger.info(f"===   source JSON            : {qat_path}")
+            logger.info(_bar)
 
         llm_kwargs = {
             "model": self.model_config.local_path,
