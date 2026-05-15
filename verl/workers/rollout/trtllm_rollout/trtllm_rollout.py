@@ -300,6 +300,19 @@ class ServerAdapter(BaseRollout):
             }
             fp8_block_quant_kwargs = dict(FP8_BLOCK_QUANT_KWARGS)
             model_config.hf_config.quantization_config = fp8_block_quant_kwargs
+
+        # NVFP4 QAT — mirror the actor's quant config onto hf_config so ServerAdapter
+        # weight-sync sees NVFP4 metadata (same role as the FP8 block above).
+        qat_cfg = config.get("qat", None)
+        if qat_cfg is not None and qat_cfg.get("enable", False):
+            qat_path = qat_cfg.get("quantization_config_path")
+            if qat_path:
+                from verl.workers.rollout.trtllm_rollout.trtllm_qat_utils import (
+                    verl_qat_json_to_trtllm_nvfp4_config,
+                )
+
+                model_config.hf_config.quantization_config = verl_qat_json_to_trtllm_nvfp4_config(qat_path)
+
         super().__init__(config, model_config, device_mesh)
         self._adapter = None
         self.hybrid_device_mesh = None
