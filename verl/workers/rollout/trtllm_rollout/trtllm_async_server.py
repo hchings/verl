@@ -154,6 +154,27 @@ class TRTLLMHttpServer:
             else:
                 raise ValueError(f"Currently only support fp8 quantization, got: {quantization}")
 
+        # NVFP4 QAT (W4A16) — actor (Megatron+modelopt) produces real-quantized NVFP4
+        # weights at sync time; rollout must build NVFP4-packed linears that match.
+        qat_cfg = self.config.qat
+        if qat_cfg is not None and qat_cfg.get("enable", False):
+            qat_mode = qat_cfg.get("mode")
+            qat_path = qat_cfg.get("quantization_config_path")
+            if qat_mode != "w4a16":
+                raise ValueError(f"TRT-LLM rollout only supports qat.mode=w4a16, got: {qat_mode}")
+            if not qat_path:
+                raise ValueError("rollout.qat.quantization_config_path is required when qat.enable=True")
+            from verl.workers.rollout.trtllm_rollout.trtllm_qat_utils import (
+                verl_qat_json_to_trtllm_nvfp4_config,
+            )
+
+            trtllm_quant_config = verl_qat_json_to_trtllm_nvfp4_config(qat_path)
+            engine_kwargs.setdefault("model_kwargs", {})
+            engine_kwargs["model_kwargs"]["quantization_config"] = trtllm_quant_config
+            if self.config.load_format != "dummy":
+                raise ValueError("NVFP4 QAT rollout requires load_format=dummy (weights synced from actor)")
+            logger.info("=== NVFP4 QAT ACTIVE in TRT-LLM rollout (W4A16) ===")
+
         llm_kwargs = {
             "model": self.model_config.local_path,
             "backend": "pytorch",
